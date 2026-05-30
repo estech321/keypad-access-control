@@ -1,7 +1,7 @@
 # Python & MicroPico
 __pycache__/
 *.py[cod]
-.micropico/
+.micropico
 
 # macOS & VS Code
 .DS_Store
