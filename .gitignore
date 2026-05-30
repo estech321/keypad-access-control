@@ -1,0 +1,9 @@
+# Python & MicroPico
+__pycache__/
+*.py[cod]
+.micropico/
+
+# macOS & VS Code
+.DS_Store
+.vscode/
+
