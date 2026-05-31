@@ -12,6 +12,8 @@
 import machine
 import utime
 import json
+import ubinascii
+import hashlib
 from lib.mfrc522 import MFRC522
 
 # --- Hardware configuration -------------------------------------------------
@@ -69,16 +71,53 @@ buzzer.duty_u16(0)  # Off by default
 
 reader = MFRC522(spi_id=0, sck=2, miso=4, mosi=3, cs=1, rst=0)
 
-# --- Storage helpers (JSON-based) ------------------------------------------
+# --- Storage helpers (encrypted JSON) --------------------------------------
+
+def get_config_key():
+    """Derive the encryption key from device-unique hardware ID."""
+    uid = machine.unique_id()
+    if not isinstance(uid, bytes):
+        uid = bytes(uid)
+    # Device-specific key; not stored in code or file
+    return hashlib.sha256(uid + b"access-config-key").digest()
+
+
+def _keystream(key, length):
+    """Generate a deterministic keystream from the derived key."""
+    output = bytearray()
+    counter = 0
+    while len(output) < length:
+        block = hashlib.sha256(key + counter.to_bytes(4, "little")).digest()
+        output.extend(block)
+        counter += 1
+    return bytes(output[:length])
+
+
+def encrypt_bytes(data):
+    """Encrypt raw bytes with a stream cipher based on device-unique key."""
+    key = get_config_key()
+    stream = _keystream(key, len(data))
+    return bytes(a ^ b for a, b in zip(data, stream))
+
+
+def decrypt_bytes(data):
+    """Decrypt raw bytes with the same stream cipher."""
+    return encrypt_bytes(data)
+
 
 def load_config():
-    """Load configuration from JSON file, or create default empty config if missing."""
+    """Load configuration from encrypted JSON file, or create default empty config if missing."""
     try:
         with open(CONFIG_FILE, "r") as f:
-            config = json.load(f)
+            wrapper = json.load(f)
+            if not isinstance(wrapper, dict) or "data" not in wrapper:
+                raise ValueError
+            encrypted = ubinascii.a2b_base64(wrapper["data"])
+            decrypted = decrypt_bytes(encrypted)
+            config = json.loads(decrypted.decode("utf-8"))
             if not isinstance(config, dict):
                 raise ValueError
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         config = {}
 
     updated = False
@@ -94,10 +133,13 @@ def load_config():
 
 
 def save_config(config):
-    """Save configuration to JSON file."""
+    """Save configuration to encrypted JSON file."""
     try:
+        plaintext = json.dumps(config).encode("utf-8")
+        encrypted = encrypt_bytes(plaintext)
+        wrapper = {"v": 1, "data": ubinascii.b2a_base64(encrypted, newline=False).decode("ascii")}
         with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f)
+            json.dump(wrapper, f)
         return True
     except OSError:
         print("Error: could not write config file.")
