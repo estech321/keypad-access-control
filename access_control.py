@@ -31,7 +31,8 @@ CONFIG_FILE = "access_config.json"
 DEFAULT_CONFIG = {
     "access_pin": "1234",
     "master_pin": "0000",
-    "authorized_cards": [298552099]  # This will be added to the defaut config JSON file if if doesn't exist
+    "authorized_cards": [298552099],  # This will be added to the default config JSON file if it doesn't exist
+    "authorized_codes": []
 }
 MAX_PIN_LENGTH = 8
 
@@ -77,11 +78,25 @@ def load_config():
     try:
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
-            return config
+            if not isinstance(config, dict):
+                raise ValueError
     except (OSError, ValueError):
-        # File doesn't exist or is corrupted, create default
+        config = {}
+
+    updated = False
+    for key, default_value in DEFAULT_CONFIG.items():
+        if key not in config:
+            config[key] = default_value
+            updated = True
+
+    if updated:
+        save_config(config)
+
+    if not config:
         save_config(DEFAULT_CONFIG)
         return DEFAULT_CONFIG
+
+    return config
 
 
 def save_config(config):
@@ -118,6 +133,49 @@ def register_new_card(card_id):
     return False
 
 
+def unregister_card(card_id):
+    """Remove an RFID card from authorized list."""
+    cards = load_authorized_cards()
+    if card_id in cards:
+        cards.remove(card_id)
+        save_authorized_cards(cards)
+        return True
+    return False
+
+
+def load_authorized_codes():
+    """Load authorized access codes from config."""
+    config = load_config()
+    return config.get("authorized_codes", [])
+
+
+def save_authorized_codes(codes):
+    """Save authorized access codes to config."""
+    config = load_config()
+    config["authorized_codes"] = codes
+    save_config(config)
+
+
+def register_new_code(code):
+    """Register a new access code."""
+    codes = load_authorized_codes()
+    if code not in codes:
+        codes.append(code)
+        save_authorized_codes(codes)
+        return True
+    return False
+
+
+def unregister_code(code):
+    """Remove an access code from authorized list."""
+    codes = load_authorized_codes()
+    if code in codes:
+        codes.remove(code)
+        save_authorized_codes(codes)
+        return True
+    return False
+
+
 def get_access_pin():
     """Get the access PIN from config."""
     config = load_config()
@@ -128,6 +186,13 @@ def get_master_pin():
     """Get the master PIN from config."""
     config = load_config()
     return config.get("master_pin", DEFAULT_CONFIG["master_pin"])
+
+
+def is_valid_access_pin(pin):
+    """Return True when PIN matches the primary access PIN or any authorized code."""
+    config = load_config()
+    authorized_codes = config.get("authorized_codes", [])
+    return pin == config.get("access_pin", DEFAULT_CONFIG["access_pin"]) or pin in authorized_codes
 
 # --- RGB LED helpers -------------------------------------------------------
 
@@ -294,6 +359,7 @@ master_pin = get_master_pin()
 
 print("Access control ready.")
 print("Authorized cards:", authorized_cards)
+print("Authorized access codes:", load_authorized_codes())
 print("")
 
 last_detected_card = None
@@ -314,9 +380,12 @@ while True:
                 print("Returning to idle.")
                 state = "idle"
             elif terminator == "*" and pin == master_pin:
-                print("Master PIN accepted. Scan new RFID tag to register.")
+                print("Master PIN accepted. Scan new RFID tag or enter code to register.")
                 state = "register"
-            elif terminator == "#" and pin == access_pin:
+            elif terminator == "#" and pin == master_pin:
+                print("Master PIN accepted. Scan RFID tag or enter code to unregister.")
+                state = "unregister"
+            elif terminator == "#" and is_valid_access_pin(pin):
                 print("Access PIN entered in idle. Please scan RFID card first.")
                 blink_rgb(led_red, 2)
                 state = "idle"
@@ -350,7 +419,7 @@ while True:
         if terminator == "cancel":
             print("PIN entry cancelled.")
             state = "idle"
-        elif terminator == "#" and pin == access_pin:
+        elif terminator == "#" and is_valid_access_pin(pin):
             print("Access granted. Unlocking door...")
             beep_valid()
             led_green()  # Green when access granted
@@ -364,41 +433,84 @@ while True:
             blink_rgb(led_red, 4)
             state = "idle"
 
-    elif state == "register":
-        # Rapid yellow blinking to indicate registration mode
-        print("Awaiting new RFID card for registration...")
-        
-        # Do rapid blinks while waiting
-        blink_start = utime.time()
+    elif state in ("register", "unregister"):
+        action = "register" if state == "register" else "unregister"
+        print("Awaiting RFID tag or code to {}...".format(action))
+
         while True:
-            rapid_blink_yellow(3)
-            beep_register_waiting()
-            
-            # Check for card during waiting
+            led_yellow()
+            key = scan_keypad()
             new_card_id = scan_rfid_card()
+
             if new_card_id is not None:
                 print("Card scanned:", new_card_id)
+                if state == "register":
+                    if new_card_id in authorized_cards:
+                        print("This tag is already registered:", new_card_id)
+                        beep_invalid()
+                        blink_rgb(led_red, 2)
+                    else:
+                        if register_new_card(new_card_id):
+                            authorized_cards = load_authorized_cards()
+                            print("New RFID tag registered:", new_card_id)
+                            beep_valid()
+                            blink_rgb(led_green, 3, 100)
+                        else:
+                            print("Failed to register card.")
+                            beep_invalid()
+                else:
+                    if new_card_id in authorized_cards:
+                        if unregister_card(new_card_id):
+                            authorized_cards = load_authorized_cards()
+                            print("RFID tag unregistered:", new_card_id)
+                            beep_valid()
+                            blink_rgb(led_green, 2, 100)
+                        else:
+                            print("Failed to remove card.")
+                            beep_invalid()
+                    else:
+                        print("This tag is not registered:", new_card_id)
+                        beep_invalid()
+                        blink_rgb(led_red, 2)
                 break
-            
-            # Check for timeout or escape (optional - can add timeout here if desired)
-            # For now, will continue waiting indefinitely
+
+            if key is not None:
+                if key in "0123456789":
+                    beep_keypress()
+                    prompt = "Enter code to {} and press #:".format(action)
+                    code, terminator = enter_pin(prompt, allow_cancel=True)
+                    if terminator == "cancel":
+                        print("{} cancelled.".format(action.capitalize()))
+                        break
+                    elif terminator == "#" and code != "":
+                        if state == "register":
+                            if register_new_code(code):
+                                print("New access code registered:", code)
+                                beep_valid()
+                                blink_rgb(led_green, 3, 100)
+                            else:
+                                print("Code already registered:", code)
+                                beep_invalid()
+                                blink_rgb(led_red, 2)
+                        else:
+                            if unregister_code(code):
+                                print("Access code unregistered:", code)
+                                beep_valid()
+                                blink_rgb(led_green, 2, 100)
+                            else:
+                                print("Code not found:", code)
+                                beep_invalid()
+                                blink_rgb(led_red, 2)
+                        break
+                    else:
+                        print("No code entered. Returning to idle.")
+                        break
+                else:
+                    # Ignore other non-digit key presses while waiting
+                    pass
+
             utime.sleep_ms(100)
-        
-        # Card was scanned
-        if new_card_id in authorized_cards:
-            print("This tag is already registered:", new_card_id)
-            beep_invalid()
-            blink_rgb(led_red, 2)
-        else:
-            if register_new_card(new_card_id):
-                authorized_cards = load_authorized_cards()
-                print("New RFID tag registered:", new_card_id)
-                beep_valid()
-                blink_rgb(led_green, 3, 100)
-            else:
-                print("Failed to register card.")
-                beep_invalid()
-        
+
         state = "idle"
 
     else:

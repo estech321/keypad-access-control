@@ -1,0 +1,163 @@
+# Keypad Access Control
+
+A MicroPython access control system for Raspberry Pi Pico that combines an RFID reader, matrix keypad, RGB status LED, and buzzer.
+
+## Disclaimers
+ - I prompted AI to generate this code, curating it with AI in an iterative process. Therefore, I was involved with the production of this code but did not write it myself. I used Gemini and GitHub Copilot Raptor Mini.
+ - As of now, PIN codes and RFID IDs are stored in plaintext, printed to the console upon startup, and are not locked or encrypted at all, so:
+  - **DO NOT USE THIS CODE TO SECURE ANYTHING** as it would be extremely easy to bypass
+  - **DO NOT REUSE CODES OR CARDS FROM OTHER IMPORTANT THINGS FOR THIS PROGRAM** as they could be comprimised. 
+  I realize my PINs and card IDs are in this code, and that is because I do not use them for anything else and have not used this program to secure anything. Stay safe!
+## Features
+
+- RFID card detection and authorization
+- Keypad PIN entry for access and administrative actions
+- Master PIN mode for registering or unregistering RFID cards and access codes
+- JSON-based persistence for:
+  - main access PIN
+  - master PIN
+  - authorized RFID cards
+  - authorized access codes
+- RGB LED visual feedback for system state
+- Buzzer audio feedback for keypresses, success, and failure
+
+## Components
+
+- `access_control.py` – main program logic
+- `lib/mfrc522.py` – MFRC522 RFID reader driver
+- `access_config.json` – stored runtime configuration data
+
+## Hardware Setup
+
+The program is configured for the following Raspberry Pi Pico GPIO pins:
+
+- Keypad rows: `GP9`, `GP10`, `GP11`, `GP12`
+- Keypad columns: `GP13`, `GP14`, `GP15`
+- RGB LED red: `GP16`
+- RGB LED green: `GP17`
+- RGB LED blue: `GP18`
+- Buzzer: `GP19`
+
+RFID SPI pins are configured as:
+
+- SCK: `GP2`
+- MOSI: `GP3`
+- MISO: `GP4`
+- CS: `GP1`
+- RST: `GP0`
+
+## How It Works
+
+### Starting the program
+
+1. Copy `access_control.py` and `lib/mfrc522.py` to the Pico filesystem.
+2. Ensure `access_config.json` is present or let the program create it automatically.
+3. Run `access_control.py` on the Pico.
+
+On startup, the system:
+
+- initializes the RFID reader and keypad
+- sets the RGB LED to red to indicate locked/idle state
+- loads the access configuration from `access_config.json`
+
+### Normal Access Flow
+
+1. Scan an RFID card.
+2. If the card is authorized, the system prompts for the access PIN.
+3. Enter the access PIN on the keypad, then press `#`.
+4. If the PIN is valid, the LED turns green and the buzzer plays a success tone.
+5. If the PIN is invalid, the LED blinks red and the buzzer sounds an error tone.
+
+### Master PIN Actions
+
+The master PIN enables administration mode.
+
+- Enter the master PIN on the keypad, then press `*` to enter registration mode.
+- Enter the master PIN on the keypad, then press `#` to enter unregistration mode.
+
+While in registration or unregistration mode, you can either:
+
+- scan an RFID card to register/unregister it
+- enter a numeric access code and press `#` to register/unregister that code
+
+### Canceling Input
+
+- In PIN/code entry prompts, pressing `#` or `*` with no digits will cancel and return to idle.
+
+## Configuration File
+
+The program stores configuration in `access_config.json`.
+
+Defaults written automatically if the file does not exist or is incomplete:
+
+```json
+{
+  "access_pin": "1234",
+  "master_pin": "0000",
+  "authorized_cards": [298552099],
+  "authorized_codes": []
+}
+```
+
+### Stored values
+
+- `access_pin` — primary PIN used for access
+- `master_pin` — administrative PIN for register/unregister operations
+- `authorized_cards` — list of authorized RFID card IDs
+- `authorized_codes` — list of additional valid access codes
+
+## Usage Examples
+
+### Grant access with an authorized card
+
+1. Scan an authorized RFID tag.
+2. Enter the access PIN.
+3. Press `#`.
+
+### Register a new RFID card
+
+1. Enter the master PIN.
+2. Press `*`.
+3. Scan the new RFID card.
+
+### Unregister an RFID card
+
+1. Enter the master PIN.
+2. Press `#`.
+3. Scan the RFID card to remove.
+
+### Register a new access code
+
+1. Enter the master PIN.
+2. Press `*`.
+3. Enter a new numeric code.
+4. Press `#`.
+
+### Unregister an access code
+
+1. Enter the master PIN.
+2. Press `#`.
+3. Enter the code to remove.
+4. Press `#`.
+
+## Notes
+
+- Keypad input is limited to `MAX_PIN_LENGTH` digits (default 8).
+- RGB LED color states:
+  - red = locked/idle or invalid action
+  - yellow = waiting for PIN or awaiting registration/unregistration input
+  - green = access granted or successful registration/unregistration
+
+## Troubleshooting
+
+- If `access_config.json` is missing or invalid, the script regenerates it with defaults.
+- If the RFID reader is not responding, verify the SPI wiring and power.
+- If the keypad does not register keys, confirm row/column pin assignments and connections.
+
+## Customization
+
+To change pin mappings or defaults:
+
+- edit `access_control.py`
+- update `ROW_PINS`, `COL_PINS`, `RGB_*_PIN`, `BUZZER_PIN`
+- update `DEFAULT_CONFIG` for default PIN values
