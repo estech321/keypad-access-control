@@ -29,9 +29,7 @@ BUZZER_PIN = 19
 # --- Access control settings ----------------------------------------------
 CONFIG_FILE = "access_config.json"
 DEFAULT_CONFIG = {
-    "access_pin": "1234",
-    "master_pin": "0000",
-    "authorized_cards": [298552099],  # This will be added to the default config JSON file if it doesn't exist
+    "authorized_cards": [],
     "authorized_codes": []
 }
 MAX_PIN_LENGTH = 8
@@ -74,7 +72,7 @@ reader = MFRC522(spi_id=0, sck=2, miso=4, mosi=3, cs=1, rst=0)
 # --- Storage helpers (JSON-based) ------------------------------------------
 
 def load_config():
-    """Load configuration from JSON file, or create default if not exists."""
+    """Load configuration from JSON file, or create default empty config if missing."""
     try:
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
@@ -91,10 +89,6 @@ def load_config():
 
     if updated:
         save_config(config)
-
-    if not config:
-        save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG
 
     return config
 
@@ -179,20 +173,81 @@ def unregister_code(code):
 def get_access_pin():
     """Get the access PIN from config."""
     config = load_config()
-    return config.get("access_pin", DEFAULT_CONFIG["access_pin"])
+    return config.get("access_pin")
 
 
 def get_master_pin():
     """Get the master PIN from config."""
     config = load_config()
-    return config.get("master_pin", DEFAULT_CONFIG["master_pin"])
+    return config.get("master_pin")
 
 
 def is_valid_access_pin(pin):
     """Return True when PIN matches the primary access PIN or any authorized code."""
+    if not pin:
+        return False
     config = load_config()
+    access_pin = config.get("access_pin")
     authorized_codes = config.get("authorized_codes", [])
-    return pin == config.get("access_pin", DEFAULT_CONFIG["access_pin"]) or pin in authorized_codes
+    return pin == access_pin or pin in authorized_codes
+
+
+def is_config_complete(config):
+    """Return True when required credentials are present in config."""
+    return bool(config.get("authorized_cards")) and bool(config.get("access_pin")) and bool(config.get("master_pin"))
+
+
+def enter_new_pin(prompt):
+    """Prompt for a new PIN twice and confirm it."""
+    while True:
+        pin, terminator = enter_pin(prompt, allow_cancel=False)
+        if terminator not in ("#", "*") or pin == "":
+            print("PIN cannot be empty. Try again.")
+            beep_invalid()
+            continue
+
+        confirm_pin, confirm_terminator = enter_pin("Confirm PIN:", allow_cancel=False)
+        if pin != confirm_pin:
+            print("PINs do not match. Try again.")
+            beep_invalid()
+            continue
+
+        return pin
+
+
+def perform_initial_setup():
+    """Ensure config contains at least one card, an access PIN, and a master PIN."""
+    config = load_config()
+
+    if is_config_complete(config):
+        return config
+
+    print("Initial configuration required.")
+    if not config.get("authorized_cards"):
+        print("Please scan a card to register as the first authorized RFID tag.")
+        while True:
+            card_id = scan_rfid_card()
+            if card_id is None:
+                utime.sleep_ms(100)
+                continue
+            config["authorized_cards"] = [card_id]
+            save_config(config)
+            print("Registered initial RFID card:", card_id)
+            beep_valid()
+            blink_rgb(led_green, 2, 100)
+            break
+
+    if not config.get("access_pin"):
+        config["access_pin"] = enter_new_pin("Enter new access PIN")
+        save_config(config)
+        print("Access PIN registered.")
+
+    if not config.get("master_pin"):
+        config["master_pin"] = enter_new_pin("Enter new master PIN")
+        save_config(config)
+        print("Master PIN registered.")
+
+    return config
 
 # --- RGB LED helpers -------------------------------------------------------
 
@@ -353,13 +408,12 @@ print("Access control system starting...")
 utime.sleep_ms(500)
 
 led_red()  # Start in locked state
-authorized_cards = load_authorized_cards()
-access_pin = get_access_pin()
-master_pin = get_master_pin()
+config = perform_initial_setup()
+authorized_cards = config.get("authorized_cards", [])
+access_pin = config.get("access_pin")
+master_pin = config.get("master_pin")
 
 print("Access control ready.")
-print("Authorized cards:", authorized_cards)
-print("Authorized access codes:", load_authorized_codes())
 print("")
 
 last_detected_card = None

@@ -4,10 +4,9 @@ A MicroPython access control system for Raspberry Pi Pico that combines an RFID 
 
 ## Disclaimers
  - I prompted AI to generate this code, curating it with AI in an iterative process. Therefore, I was involved with the production of this code but did not write it myself. I used Gemini and GitHub Copilot Raptor Mini.
- - As of now, PIN codes and RFID IDs are stored in plaintext, printed to the console upon startup, and are not locked or encrypted at all, so:
-  - **DO NOT USE THIS CODE TO SECURE ANYTHING** as it would be extremely easy to bypass
-  - **DO NOT REUSE CODES OR CARDS FROM OTHER IMPORTANT THINGS FOR THIS PROGRAM** as they could be comprimised. 
-  I realize my PINs and card IDs are in this code, and that is because I do not use them for anything else and have not used this program to secure anything. Stay safe!
+ - PIN codes and RFID IDs are stored in plaintext JSON files on the Pico's local storage and are not locked or encrypted at all, so:
+    - **DO NOT USE THIS CODE TO SECURE ANYTHING** as it would be extremely easy to bypass
+   - **DO NOT REUSE CODES OR CARDS FROM OTHER IMPORTANT THINGS FOR THIS PROGRAM** as they could be comprimised. 
 ## Features
 
 - RFID card detection and authorization
@@ -58,7 +57,7 @@ On startup, the system:
 
 - initializes the RFID reader and keypad
 - sets the RGB LED to red to indicate locked/idle state
-- loads the access configuration from `access_config.json`
+- loads the access configuration from `access_config.json`. If the file does not exist, it will have the user register a card, unlock PIN, and master PIN upon startup.
 
 ### Normal Access Flow
 
